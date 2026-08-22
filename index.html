@@ -250,21 +250,26 @@ td.depo{font-size:12px;color:var(--muted)}
         <button class="ghost" id="btnClear" style="margin-left:auto">Sepeti boşalt</button></div>
       <div id="cartBox"><div class="empty">Sepet boş. Barkodu okut ya da soldan ürün seç.</div></div>
       <div class="sum">
-        <div class="row two" style="margin-bottom:12px">
-          <div class="sugwrap">
-            <label class="f" for="inpMail">Müşteri e-postası</label>
+        <div class="row two" style="margin-bottom:10px">
+          <div class="sugwrap field">
+            <label class="f" for="inpName">Müşteri adı soyadı</label>
+            <input class="t" id="inpName" autocomplete="off" placeholder="yazmaya başla veya elle gir">
+            <div class="sug" id="sugName"></div>
+          </div>
+          <div class="sugwrap field">
+            <label class="f" for="inpMail">E-posta</label>
             <input class="t" id="inpMail" autocomplete="off" placeholder="opsiyonel">
             <div class="sug" id="sugBox"></div>
           </div>
+        </div>
+        <div class="row two" style="margin-bottom:12px">
+          <div class="field"><label class="f" for="inpPhone">Telefon</label>
+            <input class="t" id="inpPhone" inputmode="tel" placeholder="opsiyonel"></div>
           <div class="field sel"><label class="f" for="selPay">Ödeme</label>
             <select id="selPay"><option>Kart</option><option>Nakit</option><option>Havale/EFT</option></select></div>
         </div>
         <div id="onFields" hidden>
-          <div class="warn">Sepette ön sipariş var. Ürün depodan çıkıp müşteriye gönderilecek; iletişim bilgisi zorunlu.</div>
-          <div class="row two">
-            <div class="field"><label class="f" for="inpName">Ad soyad</label><input class="t" id="inpName"></div>
-            <div class="field"><label class="f" for="inpPhone">Telefon</label><input class="t" id="inpPhone" inputmode="tel"></div>
-          </div>
+          <div class="warn">Sepette ön sipariş var. Ürün depodan çıkıp müşteriye gönderilecek; e-posta veya telefon zorunlu.</div>
           <div class="row"><div class="field"><label class="f" for="inpAddr">Adres / not</label>
             <input class="t" id="inpAddr" placeholder="opsiyonel — siparişi oluştururken lazım olacak"></div></div>
         </div>
@@ -388,6 +393,7 @@ let cart = [];
 let log  = [];
 let pre  = [];
 let mails = [];
+let customers = [];   // {ad, mail, tel}
 let sold = {};   // kod -> satılan adet
 
 /* ---------- Firebase ---------- */
@@ -648,7 +654,8 @@ function complete(){
     upd[ROOT+"/sales/"+sk] = { id, ts, tarih: now.toLocaleString("tr-TR"), cihaz: DEVICE,
       ad:i.ad, renk:i.renk||"", beden:i.beden||"", kod:i.kod, kategori:i.kategori,
       tip:i.tip, adet:i.adet, fiyat:i.fiyat, tutar:i.adet*i.fiyat,
-      odeme: el("selPay").value, mail, on: !!i.on, deneme: !!i.deneme };
+      odeme: el("selPay").value, mail, musteri: name, tel: phone,
+      on: !!i.on, deneme: !!i.deneme };
     if(i.on){
       const hit = BYCODE[String(i.kod).toUpperCase()];
       const pk = DB.ref(ROOT+"/preorders").push().key;
@@ -780,30 +787,98 @@ function closeCam(){
 
 /* ---------- müşteri e-postası ---------- */
 el("btnCust").onclick = ()=>el("fileCust").click();
+
+/* tırnaklı alanları da doğru ayıran küçük CSV çözümleyici */
+function parseCSV(text){
+  const rows=[]; let row=[], cell="", q=false;
+  const s = text.replace(/\r\n?/g,"\n");
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(q){
+      if(c==='"'){ if(s[i+1]==='"'){ cell+='"'; i++; } else q=false; }
+      else cell+=c;
+    } else if(c==='"'){ q=true; }
+    else if(c===","||c===";"||c==="\t"){ row.push(cell); cell=""; }
+    else if(c==="\n"){ row.push(cell); rows.push(row); row=[]; cell=""; }
+    else cell+=c;
+  }
+  if(cell||row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r=>r.some(x=>String(x).trim()!==""));
+}
+const COL = {
+  first:["first name","ad","isim","name","müşteri adı","musteri adi"],
+  last :["last name","soyad","soyadı","surname"],
+  full :["full name","ad soyad","adı soyadı","customer name","müşteri"],
+  mail :["email","e-mail","e-posta","eposta","mail"],
+  tel  :["phone","telefon","gsm","cep","mobile"]
+};
+function findCol(head, keys){
+  for(let i=0;i<head.length;i++){
+    const h = String(head[i]).trim().toLowerCase().replace(/^\ufeff/,"");
+    if(keys.includes(h)) return i;
+  }
+  return -1;
+}
 el("fileCust").onchange = e=>{
   const f = e.target.files[0]; if(!f) return;
   const rd = new FileReader();
   rd.onload = ()=>{
-    mails = [...new Set(String(rd.result).split(/[\r\n,;]+/)
-             .map(s=>s.trim().replace(/^"|"$/g,"")).filter(s=>s.includes("@")))];
-    el("chipCust").textContent = mails.length.toLocaleString("tr-TR") + " müşteri";
+    const rows = parseCSV(String(rd.result));
+    if(!rows.length){ return; }
+    const head = rows[0];
+    const iF=findCol(head,COL.first), iL=findCol(head,COL.last),
+          iN=findCol(head,COL.full),  iM=findCol(head,COL.mail), iT=findCol(head,COL.tel);
+    const seen = new Set(); customers = [];
+    const start = (iF>=0||iN>=0||iM>=0) ? 1 : 0;
+    rows.slice(start).forEach(r=>{
+      let ad = iN>=0 ? (r[iN]||"") : [iF>=0?r[iF]:"", iL>=0?r[iL]:""].filter(Boolean).join(" ");
+      let mail = iM>=0 ? (r[iM]||"") : (r.find(x=>String(x).includes("@")) || "");
+      let tel  = iT>=0 ? (r[iT]||"") : "";
+      ad=String(ad).trim(); mail=String(mail).trim(); tel=String(tel).trim();
+      if(!ad && !mail) return;
+      const k = (mail || ad).toLowerCase();
+      if(seen.has(k)) return; seen.add(k);
+      customers.push({ad, mail, tel});
+    });
+    mails = customers.map(c=>c.mail).filter(Boolean);
+    el("chipCust").textContent = customers.length.toLocaleString("tr-TR") + " müşteri";
     el("chipCust").classList.add("on");
+    flash("ok", customers.length.toLocaleString("tr-TR") + " müşteri yüklendi"
+        + (customers.some(c=>c.ad) ? "" : " (dosyada ad soyad kolonu bulunamadı)"));
   };
-  rd.readAsText(f);
+  rd.readAsText(f, "utf-8");
 };
-el("inpMail").addEventListener("input", ()=>{
-  const q = el("inpMail").value.trim().toLowerCase(); const box = el("sugBox");
-  if(q.length < 3 || !mails.length){ box.style.display="none"; return; }
-  const hits = mails.filter(m=>m.toLowerCase().startsWith(q)).slice(0,8);
-  if(!hits.length){ box.style.display="none"; return; }
-  box.innerHTML = hits.map(m=>`<div>${m}</div>`).join("");
-  box.style.display = "block";
+
+/* ad ve e-posta alanlarının ikisi de arar; seçince diğer alanlar dolar */
+function attachSuggest(inputId, boxId, field){
+  const inp = el(inputId), box = el(boxId);
+  inp.addEventListener("input", ()=>{
+    const q = inp.value.trim().toLowerCase();
+    if(q.length < 2 || !customers.length){ box.style.display="none"; return; }
+    const hits = customers.filter(c=>{
+      const v = String(c[field]||"").toLowerCase();
+      return v.startsWith(q) || v.includes(" "+q);
+    }).slice(0,8);
+    if(!hits.length){ box.style.display="none"; return; }
+    box.innerHTML = hits.map((c,i)=>
+      `<div data-i="${customers.indexOf(c)}"><b>${c.ad||"(isimsiz)"}</b>`
+      + `${c.mail?` <span class="pvar">${c.mail}</span>`:""}</div>`).join("");
+    box.style.display = "block";
+  });
+  box.addEventListener("click", e=>{
+    const div = e.target.closest("div[data-i]"); if(!div) return;
+    const c = customers[+div.dataset.i];
+    el("inpName").value = c.ad || el("inpName").value;
+    el("inpMail").value = c.mail || el("inpMail").value;
+    if(c.tel && !el("inpPhone").value) el("inpPhone").value = c.tel;
+    box.style.display="none";
+  });
+}
+attachSuggest("inpName","sugName","ad");
+attachSuggest("inpMail","sugBox","mail");
+document.addEventListener("click", e=>{
+  if(!e.target.closest(".sugwrap")){ el("sugBox").style.display="none"; el("sugName").style.display="none"; }
 });
-el("sugBox").addEventListener("click", e=>{
-  if(e.target.tagName!=="DIV") return;
-  el("inpMail").value = e.target.textContent; el("sugBox").style.display="none";
-});
-document.addEventListener("click", e=>{ if(!e.target.closest(".sugwrap")) el("sugBox").style.display="none"; });
 
 /* ---------- CSV ---------- */
 function csv(){
