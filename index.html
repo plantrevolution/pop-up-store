@@ -687,7 +687,7 @@ function renderLog(){
   el("stBank").textContent = fmt(by("Havale/EFT"));
   if(!log.length){ box.innerHTML = '<div class="empty">Henüz satış yok.</div>'; return; }
   let h = '<table><thead><tr><th>Saat</th><th>Sipariş</th><th>Ürün</th><th>Kod</th><th>Tip</th>'
-        + '<th class="r">Adet</th><th class="r">Tutar</th><th>Ödeme</th><th>Kasa</th>'
+        + '<th class="r">Adet</th><th class="r">Tutar</th><th>Ödeme</th><th>Müşteri</th><th>Kasa</th>'
         + '<th style="width:28px"></th></tr></thead><tbody>';
   [...log].reverse().forEach((r,i)=>{
     const ix = log.length-1-i;
@@ -696,6 +696,7 @@ function renderLog(){
       <td class="pvar">${r.kod}</td><td>${r.tip==="indirimli"?"İndirimli":"Normal"}</td>
       <td class="r num">${r.adet}</td><td class="r num">${fmt(r.tutar)}</td>
       <td>${r.odeme}${r.on?' <span class="pill wait">ön sip.</span>':''}${r.deneme&&!r.on?' <span class="pill deneme">deneme</span>':''}</td>
+      <td class="pvar">${r.musteri||r.mail||r.tel ? `${r.musteri||"—"}${r.mail?`<div>${r.mail}</div>`:""}` : "—"}</td>
       <td class="pvar">${r.cihaz||"—"}</td>
       <td><button class="x" data-del="${ix}" title="Satışı iptal et">×</button></td></tr>`;
   });
@@ -882,10 +883,12 @@ document.addEventListener("click", e=>{
 
 /* ---------- CSV ---------- */
 function csv(){
-  const head = ["Sipariş","Tarih","Kategori","Ürün","Renk","Beden","Ürün Kodu","Satış Tipi","Adet","Birim Fiyat","Tutar","Ödeme","E-posta"];
+  const head = ["Sipariş","Tarih","Kasa","Kategori","Ürün","Renk","Beden","Ürün Kodu","Satış Tipi",
+                "Adet","Birim Fiyat","Tutar","Ödeme","Müşteri","Telefon","E-posta","Ön Sipariş","Etiket"];
   const q = s => '"' + String(s??"").replace(/"/g,'""') + '"';
-  const body = log.map(r=>[r.id,r.tarih,r.kategori,r.ad,r.renk,r.beden,r.kod,
-      r.tip==="indirimli"?"İndirimli":"Normal",r.adet,r.fiyat,r.tutar,r.odeme,r.mail].map(q).join(";"));
+  const body = log.map(r=>[r.id,r.tarih,r.cihaz||"",r.kategori,r.ad,r.renk,r.beden,r.kod,
+      r.tip==="indirimli"?"İndirimli":"Normal",r.adet,r.fiyat,r.tutar,r.odeme,
+      r.musteri||"", r.tel||"", r.mail||"", r.on?"Evet":"", r.deneme?"DENEME":""].map(q).join(";"));
   const blob = new Blob(["\uFEFF"+[head.map(q).join(";"),...body].join("\n")],{type:"text/csv;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
